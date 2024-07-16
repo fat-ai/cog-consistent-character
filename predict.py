@@ -27,6 +27,30 @@ mimetypes.add_type("image/webp", ".webp")
 # Save your example JSON to the same directory as predict.py
 api_json_file = "workflow_api.json"
 
+def resize_and_save_image(image_path: str, output_path: str, width: int, height: int):
+      original = Image.open(image_path)
+      o_width, o_height = original.size
+      aspect_ratio = o_width / o_height
+
+      if o_width > o_height:
+        new_width = 1024
+        new_height = round(new_width / aspect_ratio)
+      else:
+        new_height = 1024
+        new_width = round(new_height * aspect_ratio)
+
+      resized_original = original.resize((new_width, new_height), Image.LANCZOS)
+
+    # Create a black background image
+      background = Image.new('RGB', (width, height), (0, 0, 0))
+    
+      position = ((width - new_width) // 2, (height - new_height) // 2)
+    
+    # Paste the input image onto the black background
+      background.paste(resized_original, position)
+    
+    # Save the resulting image
+      background.save(output_path)
 
 class Predictor(BasePredictor):
     def setup(self):
@@ -141,116 +165,99 @@ class Predictor(BasePredictor):
 
         dwpose_input_image = workflow["95"]["inputs"]
         dwpose_input_image["image"] = kwargs["pose"]["dwpose"]
+      
+    
 
     def predict(
-        self,
-        prompt: str = Input(
-            default="A headshot photo",
-            description="Describe the subject. Include clothes and hairstyle for more consistency.",
-        ),
-        negative_prompt: str = Input(
-            description="Things you do not want to see in your image",
-            default="",
-        ),
-        subject: Path = Input(
-            description="An image of a person. Best images are square close ups of a face, but they do not have to be.",
-            default=None,
-        ),
-        # type: str = Input(
-        #     description="The type of images to generate, headshots, half-body poses or both.",
-        #     choices=[
-        #         "Both headshots and half-body poses",
-        #         "Headshot poses",
-        #         "Half-body poses",
-        #     ],
-        #     default="Both headshots and half-body poses",
-        # ),
-        number_of_outputs: int = Input(
-            description="The number of images to generate.", default=3, ge=1, le=20
-        ),
-        number_of_images_per_pose: int = Input(
-            description="The number of images to generate for each pose.",
-            default=1,
-            ge=1,
-            le=4,
-        ),
-        randomise_poses: bool = Input(
-            description="Randomise the poses used.", default=True
-        ),
-        output_format: str = optimise_images.predict_output_format(),
-        output_quality: int = optimise_images.predict_output_quality(),
-        seed: int = seed_helper.predict_seed(),
-        disable_safety_checker: bool = Input(
-            description="Disable safety checker for generated images.", default=False
-        ),
-    ) -> Iterator[Path]:
-        """Run a single prediction on the model"""
-        self.comfyUI.cleanup(ALL_DIRECTORIES)
+    self,
+    prompt: str = "A headshot photo",  # Default prompt with clearer description
+    negative_prompt: str = "",
+    subject: Path = None,  # Optional subject image path
+    number_of_outputs: int = 3,  # Number of images to generate (default 3, range 1-20)
+    number_of_images_per_pose: int = 1,  # Number of images per pose (default 1, range 1-4)
+    randomise_poses: bool = True,
+    width: int = None,  # Optional width for output images
+    height: int = None,  # Optional height for output images
+    output_format: str = optimise_images.predict_output_format(),
+    output_quality: int = optimise_images.predict_output_quality(),
+    seed: int = seed_helper.predict_seed(),
+    disable_safety_checker: bool = False,
+) -> Iterator[Path]:
+ 
+      self.comfyUI.cleanup(ALL_DIRECTORIES)
 
-        # Headshot poses are not coming out consistently good
-        type = "Half-body poses"
+    # Headshot poses are not coming out consistently good
+      type = "Half-body poses"
 
-        using_fixed_seed = bool(seed)
-        seed = seed_helper.generate(seed)
+      using_fixed_seed = bool(seed)
+      seed = seed_helper.generate(seed)
 
-        self.handle_input_file(subject, filename="subject.png")
-        poses = self.get_poses(number_of_outputs, randomise_poses, type)
+      self.handle_input_file(subject, filename="subject.png")
+      poses = self.get_poses(number_of_outputs, randomise_poses, type)
 
-        with open(api_json_file, "r") as file:
-            workflow = json.loads(file.read())
+      with open(api_json_file, "r") as file:
+        workflow = json.loads(file.read())
 
-        self.comfyUI.connect()
+      self.comfyUI.connect()
 
-        if using_fixed_seed:
-            self.comfyUI.reset_execution_cache()
+      if using_fixed_seed:
+        self.comfyUI.reset_execution_cache()
 
-        returned_files = []
-        has_any_nsfw_content = False
-        has_yielded_safe_content = False
+      returned_files = []
+      has_any_nsfw_content = False
+      has_yielded_safe_content = False
 
-        for pose in poses:
-            self.update_workflow(
-                workflow,
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                seed=seed,
-                type=type,
-                number_of_outputs=number_of_outputs,
-                number_of_images_per_pose=number_of_images_per_pose,
-                randomise_poses=randomise_poses,
-                pose=pose,
-            )
-            self.comfyUI.run_workflow(workflow)
-            all_output_files = self.comfyUI.get_files(OUTPUT_DIR)
-            new_files = [
-                file
-                for file in all_output_files
-                if file.name.rsplit(".", 1)[0] not in returned_files
-            ]
-            optimised_images = optimise_images.optimise_image_files(
-                output_format, output_quality, new_files
-            )
+      for pose in poses:
+        if width and height:
+            resized_kps_path = os.path.join(INPUT_DIR, f"resized_{os.path.basename(pose['kps'])}")
+            resized_dwpose_path = os.path.join(INPUT_DIR, f"resized_{os.path.basename(pose['dwpose'])}")
+            resize_and_save_image(pose["kps"], resized_kps_path, width, height)
+            resize_and_save_image(pose["dwpose"], resized_dwpose_path, width, height)
+            pose["kps"] = resized_kps_path
+            pose["dwpose"] = resized_dwpose_path
+        
+        self.update_workflow(
+            workflow,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            seed=seed,
+            type=type,
+            number_of_outputs=number_of_outputs,
+            number_of_images_per_pose=number_of_images_per_pose,
+            randomise_poses=randomise_poses,
+            pose=pose,
+        )
+        self.comfyUI.run_workflow(workflow)
+        all_output_files = self.comfyUI.get_files(OUTPUT_DIR)
+        new_files = [
+            file
+            for file in all_output_files
+            if file.name.rsplit(".", 1)[0] not in returned_files
+        ]
+        optimised_images = optimise_images.optimise_image_files(
+            output_format, output_quality, new_files
+        )
 
-            for image in optimised_images:
-                if not disable_safety_checker:
-                    has_nsfw_content = self.safetyChecker.run(
-                        [image], error_on_all_nsfw=False
-                    )
-                    if any(has_nsfw_content):
-                        has_any_nsfw_content = True
-                        print(f"Not returning image {image} as it has NSFW content.")
-                    else:
-                        yield Path(image)
-                        has_yielded_safe_content = True
+        for image in optimised_images:
+            if not disable_safety_checker:
+                has_nsfw_content = self.safetyChecker.run(
+                    [image], error_on_all_nsfw=False
+                )
+                if any(has_nsfw_content):
+                    has_any_nsfw_content = True
+                    print(f"Not returning image {image} as it has NSFW content.")
                 else:
                     yield Path(image)
                     has_yielded_safe_content = True
+            else:
+                yield Path(image)
+                has_yielded_safe_content = True
 
-            returned_files.extend(
-                [file.name.rsplit(".", 1)[0] for file in all_output_files]
-            )
+        returned_files.extend(
+            [file.name.rsplit(".", 1)[0] for file in all_output_files]
+        )
 
-        if has_any_nsfw_content and not has_yielded_safe_content:
-            raise Exception(
-                "NSFW content detected in all outputs. Try running it again, or try a different prompt."
-            )
+      if has_any_nsfw_content and not has_yielded_safe_content:
+        raise Exception(
+            "NSFW content detected in all outputs. Try running it again, or try a different prompt."
+        )
