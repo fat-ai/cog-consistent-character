@@ -40,7 +40,7 @@ def resize_and_save_image(image_path: str, output_path: str, width: int, height:
         new_width = round(distance * new_height * aspect_ratio)
 
       resized_original = original.resize((new_width, new_height), Image.LANCZOS)
-        
+    
     # Create a black background image
       background = Image.new('RGB', (width, height), (0, 0, 0))
     
@@ -162,10 +162,9 @@ class Predictor(BasePredictor):
 
         kps_input_image = workflow["94"]["inputs"]
         kps_input_image["image"] = kwargs["pose"]["kps"]
-
+        
         dwpose_input_image = workflow["95"]["inputs"]
         dwpose_input_image["image"] = kwargs["pose"]["dwpose"]
-      
     
 
     def predict(
@@ -177,8 +176,8 @@ class Predictor(BasePredictor):
     distance: float=1.0,  # how far away the subject should be)
     number_of_images_per_pose: int = 1,  # Number of images per pose (default 1, range 1-4)
     randomise_poses: bool = True,
-    width: int = None,  # Optional width for output images
-    height: int = None,  # Optional height for output images
+    width: int = 1024,  # Optional width for output images
+    height: int = 1024,  # Optional height for output images
     output_format: str = optimise_images.predict_output_format(),
     output_quality: int = optimise_images.predict_output_quality(),
     seed: int = seed_helper.predict_seed(),
@@ -189,7 +188,8 @@ class Predictor(BasePredictor):
 
     # Headshot poses are not coming out consistently good
       type = "Half-body poses"
-
+      print(width)
+      print(height)
       using_fixed_seed = bool(seed)
       seed = seed_helper.generate(seed)
 
@@ -207,7 +207,7 @@ class Predictor(BasePredictor):
       returned_files = []
       has_any_nsfw_content = False
       has_yielded_safe_content = False
-
+     
       for pose in poses:
         if width and height:
             resized_kps_path = os.path.join(INPUT_DIR, f"resized_{os.path.basename(pose['kps'])}")
@@ -216,6 +216,8 @@ class Predictor(BasePredictor):
             resize_and_save_image(pose["dwpose"], resized_dwpose_path, width, height, distance)
             pose["kps"] = resized_kps_path
             pose["dwpose"] = resized_dwpose_path
+            print("RESIZED? "+pose["kps"])
+            print("RESIZED? "+pose["dwpose"])
         
         self.update_workflow(
             workflow,
